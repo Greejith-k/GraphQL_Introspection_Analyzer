@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GraphQL Introspection Analyzer</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#161a22; --panel2:#1d222c; --border:#2a3040;
+  --text:#e7eaf0; --muted:#8b93a7; --accent:#6ea8fe; --accent2:#5fe3a1;
+  --danger:#ff6b6b; --warn:#ffb86b; --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f6f7fb; --panel:#ffffff; --panel2:#f0f2f8; --border:#dde1ec;
+    --text:#1a1d27; --muted:#5a6174; --accent:#2563eb; --accent2:#0e9f6e;
+    --danger:#d63939; --warn:#b36b00;
+  }
+}
+:root[data-theme="light"]{
+  --bg:#f6f7fb; --panel:#ffffff; --panel2:#f0f2f8; --border:#dde1ec;
+  --text:#1a1d27; --muted:#5a6174; --accent:#2563eb; --accent2:#0e9f6e;
+  --danger:#d63939; --warn:#b36b00;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+.wrap{max-width:1100px;margin:0 auto;padding:24px 16px 60px;}
+h1{font-size:1.4rem;margin:0 0 4px;}
+.sub{color:var(--muted);font-size:.9rem;margin:0 0 20px;}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px;}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+textarea{width:100%;min-height:120px;background:var(--panel2);color:var(--text);border:1px solid var(--border);
+  border-radius:8px;padding:10px;font-family:var(--mono);font-size:.8rem;resize:vertical;}
+input[type=file]{color:var(--muted);font-size:.85rem;}
+button{background:var(--accent);color:#061021;border:none;border-radius:8px;padding:9px 16px;font-weight:600;
+  cursor:pointer;font-size:.85rem;}
+button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
+button:hover{filter:brightness(1.08);}
+button:active{transform:translateY(1px);}
+.stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;}
+.stat{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:.8rem;}
+.stat b{display:block;font-size:1.2rem;color:var(--accent);}
+.err{color:var(--danger);font-size:.85rem;margin-top:8px;white-space:pre-wrap;}
+.tabs{display:flex;gap:8px;margin-bottom:12px;}
+.tab{padding:8px 16px;border-radius:8px;cursor:pointer;border:1px solid var(--border);background:var(--panel2);font-size:.85rem;}
+.tab.active{background:var(--accent);color:#061021;border-color:var(--accent);}
+.toolbar{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center;}
+.toolbar input[type=text]{flex:1;min-width:180px;background:var(--panel2);color:var(--text);border:1px solid var(--border);
+  border-radius:8px;padding:8px 10px;font-size:.85rem;}
+.op{background:var(--panel2);border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden;}
+.op-head{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);}
+.op-name{font-family:var(--mono);font-size:.85rem;}
+.badge{font-size:.65rem;padding:2px 8px;border-radius:20px;background:var(--border);color:var(--muted);margin-left:8px;}
+.badge.sensitive{background:rgba(255,107,107,.18);color:var(--danger);}
+pre{margin:0;padding:12px;font-family:var(--mono);font-size:.78rem;white-space:pre;overflow-x:auto;}
+.copybtn{font-size:.7rem;padding:4px 10px;}
+.hidden{display:none;}
+.footer{color:var(--muted);font-size:.75rem;text-align:center;margin-top:30px;}
+.empty{color:var(--muted);font-size:.9rem;padding:20px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GraphQL Introspection Analyzer</h1>
+  <p class="sub">Upload or paste a GraphQL introspection JSON result. It auto-generates every possible query and mutation, with sample arguments and nested selection sets, for use in testing.</p>
+
+  <div class="panel">
+    <div class="row">
+      <input type="file" id="fileInput" accept="application/json,.json">
+      <button class="secondary" id="pasteToggle" type="button">Paste JSON instead</button>
+      <button id="analyzeBtn" type="button">Analyze</button>
+    </div>
+    <textarea id="pasteArea" class="hidden" placeholder='Paste the full introspection response here, e.g. {"data":{"__schema":{...}}}'></textarea>
+    <div id="errBox" class="err hidden"></div>
+    <div id="statsBox" class="stats hidden"></div>
+  </div>
+
+  <div id="resultsPanel" class="hidden">
+    <div class="tabs">
+      <div class="tab active" data-tab="queries">Queries (<span id="qCount">0</span>)</div>
+      <div class="tab" data-tab="mutations">Mutations (<span id="mCount">0</span>)</div>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="filterInput" placeholder="Filter by field name...">
+      <button class="secondary" id="downloadBtn" type="button">Download .graphql</button>
+    </div>
+    <div id="queriesList"></div>
+    <div id="mutationsList" class="hidden"></div>
+  </div>
+
+  <div class="footer">Runs entirely in your browser. Nothing is uploaded anywhere.</div>
+</div>
+
+<script>
+const fileInput = document.getElementById('fileInput');
+const pasteArea = document.getElementById('pasteArea');
+const pasteToggle = document.getElementById('pasteToggle');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const errBox = document.getElementById('errBox');
+const statsBox = document.getElementById('statsBox');
+const resultsPanel = document.getElementById('resultsPanel');
+const queriesList = document.getElementById('queriesList');
+const mutationsList = document.getElementById('mutationsList');
+const filterInput = document.getElementById('filterInput');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let rawText = null;
+let generated = {queries:[], mutations:[]};
+let activeTab = 'queries';
+
+pasteToggle.addEventListener('click', ()=>{
+  pasteArea.classList.toggle('hidden');
+});
+
+fileInput.addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{ rawText = r.result; };
+  r.readAsText(f);
+});
+
+analyzeBtn.addEventListener('click', ()=>{
+  const text = (!pasteArea.classList.contains('hidden') && pasteArea.value.trim()) ? pasteArea.value : rawText;
+  if(!text){ showErr('Upload a file or paste introspection JSON first.'); return; }
+  try{
+    const parsed = JSON.parse(text);
+    run(parsed);
+  }catch(e){
+    showErr('Could not parse JSON: ' + e.message);
+  }
+});
+
+function showErr(msg){
+  errBox.textContent = msg;
+  errBox.classList.remove('hidden');
+  resultsPanel.classList.add('hidden');
+  statsBox.classList.add('hidden');
+}
+
+function describeType(t){
+  let list=false, cur=t;
+  while(cur && cur.kind==='NON_NULL') cur = cur.ofType;
+  if(cur && cur.kind==='LIST'){
+    list = true; cur = cur.ofType;
+    while(cur && cur.kind==='NON_NULL') cur = cur.ofType;
+  }
+  return {base: cur, list};
+}
+
+function sampleScalar(name){
+  switch(name){
+    case 'Int': return '1';
+    case 'Float': return '1.5';
+    case 'Boolean': return 'true';
+    case 'ID': return '"1"';
+    default: return '"test"';
+  }
+}
+
+function sampleScalarVariant(name, idx){
+  const sets = {
+    Int: ['1','2','0','-1'],
+    Float: ['1.5','2.5','0','-1.5'],
+    Boolean: ['true','false','true','false'],
+    ID: ['"1"','"2"','"0"','"-1"']
+  };
+  const defaults = ['"test1"','"test2"','""','"test4"'];
+  const arr = sets[name] || defaults;
+  return arr[idx % arr.length];
+}
+
+function buildArgValueVariant(typeRef, typeMap, depth, idx){
+  const {base, list} = describeType(typeRef);
+  let val = 'null';
+  if(base){
+    if(base.kind==='SCALAR'){ val = sampleScalarVariant(base.name, idx); }
+    else if(base.kind==='ENUM'){
+      const t = typeMap[base.name];
+      const vals = (t && t.enumValues) || [];
+      val = vals.length ? vals[idx % vals.length].name : 'UNKNOWN_ENUM_VALUE';
+    } else if(base.kind==='INPUT_OBJECT'){
+      if(depth>2){ val = '{}'; }
+      else{
+        const t = typeMap[base.name];
+        const fields = (t && t.inputFields) || [];
+        const parts = fields.map(f=>`${f.name}: ${buildArgValueVariant(f.type, typeMap, depth+1, idx)}`);
+        val = `{${parts.join(', ')}}`;
+      }
+    }
+  }
+  return list ? `[${val}]` : val;
+}
+
+function buildArgsStringVariant(args, typeMap, idx){
+  if(!args || !args.length) return '';
+  const parts = args.map(a=>`${a.name}: ${buildArgValueVariant(a.type, typeMap, 0, idx)}`);
+  return `(${parts.join(', ')})`;
+}
+
+function buildAliasBatch(opKeyword, field, typeMap, count){
+  count = count || 4;
+  const selStr = buildSelection(field.type, typeMap, 0, []);
+  const opName = field.name.charAt(0).toUpperCase() + field.name.slice(1);
+  const lines = [];
+  for(let i=0;i<count;i++){
+    const argsStr = buildArgsStringVariant(field.args, typeMap, i);
+    lines.push(`  alias${i+1}: ${field.name}${argsStr}${selStr}`);
+  }
+  return `${opKeyword} ${opName}AliasBatch {\n${lines.join('\n')}\n}`;
+}
+
+function buildArgValue(typeRef, typeMap, depth){
+  const {base, list} = describeType(typeRef);
+  let val = 'null';
+  if(base){
+    if(base.kind==='SCALAR'){ val = sampleScalar(base.name); }
+    else if(base.kind==='ENUM'){
+      const t = typeMap[base.name];
+      val = (t && t.enumValues && t.enumValues[0]) ? t.enumValues[0].name : 'UNKNOWN_ENUM_VALUE';
+    } else if(base.kind==='INPUT_OBJECT'){
+      if(depth>2){ val = '{}'; }
+      else{
+        const t = typeMap[base.name];
+        const fields = (t && t.inputFields) || [];
+        const parts = fields.map(f=>`${f.name}: ${buildArgValue(f.type, typeMap, depth+1)}`);
+        val = `{${parts.join(', ')}}`;
+      }
+    }
+  }
+  return list ? `[${val}]` : val;
+}
+
+function buildArgsString(args, typeMap){
+  if(!args || !args.length) return '';
+  const parts = args.map(a=>`${a.name}: ${buildArgValue(a.type, typeMap, 0)}`);
+  return `(${parts.join(', ')})`;
+}
+
+function buildSelection(typeRef, typeMap, depth, pathStack){
+  const {base} = describeType(typeRef);
+  if(!base || !base.name) return '';
+  if(base.kind==='SCALAR' || base.kind==='ENUM') return '';
+  if(pathStack.includes(base.name) || depth>3) return ' {\n' + '  '.repeat(depth+1) + '__typename\n' + '  '.repeat(depth) + '}';
+  const t = typeMap[base.name];
+  if(!t) return '';
+  if(!t.fields || !t.fields.length){
+    return ' {\n' + '  '.repeat(depth+1) + '__typename\n' + '  '.repeat(depth) + '}';
+  }
+  const chosen = t.fields.slice(0, 15);
+  const lines = chosen.map(f=> '  '.repeat(depth+1) + f.name + buildSelection(f.type, typeMap, depth+1, [...pathStack, base.name]));
+  return ' {\n' + lines.join('\n') + '\n' + '  '.repeat(depth) + '}';
+}
+
+function buildOperation(opKeyword, field, typeMap){
+  const argsStr = buildArgsString(field.args, typeMap);
+  const selStr = buildSelection(field.type, typeMap, 0, []);
+  const opName = field.name.charAt(0).toUpperCase() + field.name.slice(1);
+  return `${opKeyword} ${opName} {\n  ${field.name}${argsStr}${selStr}\n}`;
+}
+
+const SENSITIVE_RE = /delete|remove|destroy|drop|update|edit|patch|create|add|insert|set|change|reset|disable|enable|grant|revoke|admin|password|token|role|permission/i;
+
+function run(parsed){
+  errBox.classList.add('hidden');
+  const schema = parsed.__schema || (parsed.data && parsed.data.__schema);
+  if(!schema || !schema.types){
+    showErr('No __schema found in this JSON. Paste the full introspection query result (the object containing "__schema").');
+    return;
+  }
+  const typeMap = {};
+  schema.types.forEach(t=>{ typeMap[t.name] = t; });
+
+  const queryTypeName = schema.queryType && schema.queryType.name;
+  const mutationTypeName = schema.mutationType && schema.mutationType.name;
+
+  generated.queries = [];
+  generated.mutations = [];
+
+  if(queryTypeName && typeMap[queryTypeName] && typeMap[queryTypeName].fields){
+    typeMap[queryTypeName].fields.forEach(f=>{
+      generated.queries.push({
+        name:f.name,
+        op: buildOperation('query', f, typeMap),
+        aliasBatch: buildAliasBatch('query', f, typeMap, 4),
+        sensitive:false
+      });
+    });
+  }
+  if(mutationTypeName && typeMap[mutationTypeName] && typeMap[mutationTypeName].fields){
+    typeMap[mutationTypeName].fields.forEach(f=>{
+      generated.mutations.push({
+        name:f.name,
+        op: buildOperation('mutation', f, typeMap),
+        aliasBatch: buildAliasBatch('mutation', f, typeMap, 4),
+        sensitive: SENSITIVE_RE.test(f.name)
+      });
+    });
+  }
+
+  renderStats(schema, typeMap);
+  renderLists();
+  resultsPanel.classList.remove('hidden');
+}
+
+function renderStats(schema, typeMap){
+  const typeCount = schema.types.filter(t=>!t.name.startsWith('__')).length;
+  statsBox.innerHTML = `
+    <div class="stat"><b>${generated.queries.length}</b>Queries</div>
+    <div class="stat"><b>${generated.mutations.length}</b>Mutations</div>
+    <div class="stat"><b>${generated.mutations.filter(m=>m.sensitive).length}</b>Flagged sensitive</div>
+    <div class="stat"><b>${typeCount}</b>Types in schema</div>
+  `;
+  statsBox.classList.remove('hidden');
+  document.getElementById('qCount').textContent = generated.queries.length;
+  document.getElementById('mCount').textContent = generated.mutations.length;
+}
+
+function opCard(item){
+  const div = document.createElement('div');
+  div.className = 'op';
+  div.innerHTML = `
+    <div class="op-head">
+      <span class="op-name">${item.name}${item.sensitive?'<span class="badge sensitive">sensitive</span>':''}</span>
+      <div class="row" style="gap:6px;">
+        <button class="secondary copybtn aliasToggleBtn" type="button">4 Aliases</button>
+        <button class="secondary copybtn copyOpBtn" type="button">Copy</button>
+      </div>
+    </div>
+    <pre class="opPre"></pre>
+    <div class="aliasBlock hidden" style="border-top:1px solid var(--border);">
+      <div class="op-head" style="border-bottom:1px solid var(--border);background:var(--panel);">
+        <span class="op-name" style="color:var(--muted);font-size:.75rem;">4 sample alias requests (varied args, batched in one call)</span>
+        <button class="secondary copybtn copyAliasBtn" type="button">Copy</button>
+      </div>
+      <pre class="aliasPre"></pre>
+    </div>
+  `;
+  div.querySelector('.opPre').textContent = item.op;
+  div.querySelector('.aliasPre').textContent = item.aliasBatch || '';
+
+  div.querySelector('.copyOpBtn').addEventListener('click', (e)=>{
+    navigator.clipboard.writeText(item.op).catch(()=>{});
+    const b = e.currentTarget;
+    const old = b.textContent; b.textContent = 'Copied'; setTimeout(()=>b.textContent=old, 1200);
+  });
+
+  div.querySelector('.aliasToggleBtn').addEventListener('click', (e)=>{
+    const block = div.querySelector('.aliasBlock');
+    block.classList.toggle('hidden');
+    e.currentTarget.textContent = block.classList.contains('hidden') ? '4 Aliases' : 'Hide Aliases';
+  });
+
+  div.querySelector('.copyAliasBtn').addEventListener('click', (e)=>{
+    navigator.clipboard.writeText(item.aliasBatch || '').catch(()=>{});
+    const b = e.currentTarget;
+    const old = b.textContent; b.textContent = 'Copied'; setTimeout(()=>b.textContent=old, 1200);
+  });
+
+  return div;
+}
+
+function renderLists(){
+  const filter = filterInput.value.trim().toLowerCase();
+  queriesList.innerHTML = '';
+  mutationsList.innerHTML = '';
+
+  const q = generated.queries.filter(i=>i.name.toLowerCase().includes(filter));
+  const m = generated.mutations.filter(i=>i.name.toLowerCase().includes(filter));
+
+  if(!q.length) queriesList.innerHTML = '<div class="empty">No matching queries.</div>';
+  else q.forEach(i=>queriesList.appendChild(opCard(i)));
+
+  if(!m.length) mutationsList.innerHTML = '<div class="empty">No matching mutations.</div>';
+  else m.forEach(i=>mutationsList.appendChild(opCard(i)));
+}
+
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+    activeTab = tab.dataset.tab;
+    queriesList.classList.toggle('hidden', activeTab!=='queries');
+    mutationsList.classList.toggle('hidden', activeTab!=='mutations');
+  });
+});
+
+filterInput.addEventListener('input', renderLists);
+
+downloadBtn.addEventListener('click', ()=>{
+  const parts = [
+    '# ---- QUERIES ----',
+    ...generated.queries.map(i=>i.op),
+    '',
+    '# ---- MUTATIONS ----',
+    ...generated.mutations.map(i=>i.op),
+    '',
+    '# ---- QUERY ALIAS BATCHES (4 varied-arg requests per field) ----',
+    ...generated.queries.map(i=>i.aliasBatch),
+    '',
+    '# ---- MUTATION ALIAS BATCHES (4 varied-arg requests per field) ----',
+    ...generated.mutations.map(i=>i.aliasBatch)
+  ];
+  const blob = new Blob([parts.join('\n\n')], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'graphql-generated-operations.graphql';
+  a.click();
+});
+</script>
+</body>
+</html>
